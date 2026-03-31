@@ -168,10 +168,10 @@ function RecommendTab({ locale }: { locale: Locale }) {
               </Select>
             </div>
             <div>
-              <Label htmlFor="smoker">{t("page.ai.smoker", locale)}</Label>
+              <Label htmlFor="smoker">{t("page.ai.smoking", locale)}</Label>
               <Select id="smoker" value={smoker} onChange={(e) => setSmoker(e.target.value)} className="mt-1">
                 <option value="false">{t("page.ai.non_smoker", locale)}</option>
-                <option value="true">{t("page.ai.smoker", locale)}</option>
+                <option value="true">{t("page.ai.smoker_yes", locale)}</option>
               </Select>
             </div>
             <div>

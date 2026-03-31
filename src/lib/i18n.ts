@@ -74,6 +74,7 @@ const zhTW: Dict = {
   "page.ai.no_match": "沒有找到匹配的產品",
   "page.ai.hint": "填寫客戶條件後點擊「開始推薦」", "page.ai.analyzing": "正在分析產品數據...",
   "page.ai.premium_term": "繳費期", "page.ai.company": "公司", "page.ai.product_name": "產品名稱",
+  "page.ai.smoking": "吸煙狀況", "page.ai.smoker_yes": "吸煙", "page.ai.non_smoker": "非吸煙",
   // companies
   "page.companies.title": "保險公司管理", "page.companies.desc": "管理合作保險公司的基本信息",
   "page.companies.add": "新增公司", "page.companies.empty": "暫無保險公司",
@@ -196,6 +197,7 @@ const zhCN: Dict = {
   "page.ai.no_match": "没有找到匹配的产品",
   "page.ai.hint": "填写客户条件后点击「开始推荐」", "page.ai.analyzing": "正在分析产品数据...",
   "page.ai.premium_term": "缴费期", "page.ai.company": "公司", "page.ai.product_name": "产品名称",
+  "page.ai.smoking": "吸烟状况", "page.ai.smoker_yes": "吸烟", "page.ai.non_smoker": "非吸烟",
   "page.companies.title": "保险公司管理", "page.companies.desc": "管理合作保险公司的基本信息",
   "page.companies.add": "新增公司", "page.companies.empty": "暂无保险公司",
   "page.companies.empty_hint": "点击「新增公司」开始添加",
@@ -312,6 +314,7 @@ const en: Dict = {
   "page.ai.no_match": "No matching products found",
   "page.ai.hint": "Fill in conditions and click \"Recommend\"", "page.ai.analyzing": "Analyzing product data...",
   "page.ai.premium_term": "Premium Term", "page.ai.company": "Company", "page.ai.product_name": "Product",
+  "page.ai.smoking": "Smoking", "page.ai.smoker_yes": "Smoker", "page.ai.non_smoker": "Non-smoker",
   "page.companies.title": "Company Management", "page.companies.desc": "Manage partner insurance companies",
   "page.companies.add": "Add Company", "page.companies.empty": "No companies yet",
   "page.companies.empty_hint": "Click \"Add Company\" to get started",
