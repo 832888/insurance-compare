@@ -203,18 +203,19 @@ function extractValue(str: string, pattern: RegExp): string {
   return str.replace(pattern, "").trim().split(/\s+/)[0] || "";
 }
 
-// ---- Gemini native API with retry ----
+// ---- Gemini native API with retry + fallback model ----
 
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const GEMINI_MODEL = "gemini-2.0-flash";
+const MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
 const MAX_RETRIES = 3;
+const RETRY_DELAYS = [5000, 15000, 30000];
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function callGemini(base64: string, mimeType: string, apiKey: string): Promise<string> {
-  const url = `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+async function callGeminiOnce(model: string, base64: string, mimeType: string, apiKey: string): Promise<{ ok: boolean; text?: string; status?: number; error?: string }> {
+  const url = `${GEMINI_API_URL}/${model}:generateContent?key=${apiKey}`;
 
   const body = {
     contents: [
@@ -231,32 +232,62 @@ async function callGemini(base64: string, mimeType: string, apiKey: string): Pro
     },
   };
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
-    if (res.status === 429) {
-      const wait = Math.pow(2, attempt + 1) * 1000;
-      console.log(`Gemini 429 rate limit, retrying in ${wait}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
-      await sleep(wait);
-      continue;
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    let detail = "";
+    try {
+      const parsed = JSON.parse(errBody);
+      detail = parsed?.error?.message || errBody;
+    } catch {
+      detail = errBody;
     }
-
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`Gemini API error ${res.status}: ${errBody}`);
-    }
-
-    const json = await res.json();
-    const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error("Gemini 未返回有效内容");
-    return text;
+    return { ok: false, status: res.status, error: detail };
   }
 
-  throw new Error("Gemini API 请求超过重试次数，请稍后再试");
+  const json = await res.json();
+  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+  return { ok: true, text: text || "" };
+}
+
+async function callGemini(base64: string, mimeType: string, apiKey: string): Promise<string> {
+  let lastError = "";
+
+  for (const model of MODELS) {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const result = await callGeminiOnce(model, base64, mimeType, apiKey);
+
+      if (result.ok) {
+        if (!result.text) throw new Error("Gemini 返回空内容，请换一张更清晰的图片");
+        return result.text;
+      }
+
+      lastError = `[${model}] ${result.status}: ${result.error}`;
+      console.log(`Gemini attempt ${attempt + 1}/${MAX_RETRIES} with ${model} failed: ${lastError}`);
+
+      if (result.status === 429) {
+        await sleep(RETRY_DELAYS[attempt] || 30000);
+        continue;
+      }
+
+      if (result.status === 400) {
+        throw new Error(`API Key 无效或请求格式错误: ${result.error}`);
+      }
+      if (result.status === 403) {
+        throw new Error(`API Key 无权限，请检查是否已启用 Gemini API: ${result.error}`);
+      }
+
+      break;
+    }
+    console.log(`Model ${model} exhausted, trying next model...`);
+  }
+
+  throw new Error(`Gemini 持续限流，请等待 1 分钟后重试。最后错误: ${lastError}`);
 }
 
 async function extractFromImage(base64: string, mimeType: string, apiKey: string): Promise<ExtractedProduct> {
