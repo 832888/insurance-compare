@@ -1,5 +1,4 @@
 import * as XLSX from "xlsx";
-import OpenAI from "openai";
 
 interface ExtractedCashValue {
   policyYear: number;
@@ -53,6 +52,8 @@ Rules:
 - Premium term (供款期/缴费年期): how many years to pay
 - If you cannot extract certain fields, use reasonable defaults
 - Return ONLY the JSON object, nothing else`;
+
+// ---- Excel / CSV parsing (unchanged) ----
 
 function parseExcelOrCsv(buffer: Buffer, filename: string): ExtractedProduct {
   const wb = XLSX.read(buffer, { type: "buffer" });
@@ -140,7 +141,6 @@ function parseExcelOrCsv(buffer: Buffer, filename: string): ExtractedProduct {
   });
 
   const premiumTerms = detectedPremiumTerm > 0 ? [detectedPremiumTerm] : [5];
-
   return { companyName, productName, currency, premiumTerms, cashValues };
 }
 
@@ -203,30 +203,65 @@ function extractValue(str: string, pattern: RegExp): string {
   return str.replace(pattern, "").trim().split(/\s+/)[0] || "";
 }
 
-const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
-const DEFAULT_MODEL = "gemini-2.0-flash";
+// ---- Gemini native API with retry ----
 
-async function extractFromImage(base64: string, mimeType: string, apiKey: string, apiBase?: string): Promise<ExtractedProduct> {
-  const openai = new OpenAI({
-    apiKey,
-    baseURL: apiBase || GEMINI_BASE_URL,
-  });
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const GEMINI_MODEL = "gemini-2.0-flash";
+const MAX_RETRIES = 3;
 
-  const response = await openai.chat.completions.create({
-    model: DEFAULT_MODEL,
-    max_tokens: 4096,
-    messages: [
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callGemini(base64: string, mimeType: string, apiKey: string): Promise<string> {
+  const url = `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+  const body = {
+    contents: [
       {
-        role: "user",
-        content: [
-          { type: "text", text: VISION_PROMPT },
-          { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+        parts: [
+          { text: VISION_PROMPT },
+          { inline_data: { mime_type: mimeType, data: base64 } },
         ],
       },
     ],
-  });
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 8192,
+    },
+  };
 
-  const text = response.choices[0]?.message?.content || "";
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status === 429) {
+      const wait = Math.pow(2, attempt + 1) * 1000;
+      console.log(`Gemini 429 rate limit, retrying in ${wait}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      await sleep(wait);
+      continue;
+    }
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Gemini API error ${res.status}: ${errBody}`);
+    }
+
+    const json = await res.json();
+    const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("Gemini 未返回有效内容");
+    return text;
+  }
+
+  throw new Error("Gemini API 请求超过重试次数，请稍后再试");
+}
+
+async function extractFromImage(base64: string, mimeType: string, apiKey: string): Promise<ExtractedProduct> {
+  const text = await callGemini(base64, mimeType, apiKey);
+
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("AI 未能识别文档内容");
 
@@ -254,12 +289,13 @@ async function extractFromImage(base64: string, mimeType: string, apiKey: string
   };
 }
 
+// ---- Route handler ----
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const apiKey = formData.get("apiKey") as string | null;
-    const apiBase = formData.get("apiBase") as string | null;
 
     if (!file) {
       return Response.json({ error: "未上传文件" }, { status: 400 });
@@ -278,14 +314,14 @@ export async function POST(request: Request) {
         return Response.json({ error: "图片识别需要提供 Gemini API Key（在设置中填写或配置环境变量 GEMINI_API_KEY）" }, { status: 400 });
       }
       const base64 = buffer.toString("base64");
-      result = await extractFromImage(base64, file.type, key, apiBase || undefined);
+      result = await extractFromImage(base64, file.type, key);
     } else if (filename.endsWith(".pdf")) {
       const key = apiKey || process.env.GEMINI_API_KEY;
       if (!key) {
         return Response.json({ error: "PDF 识别需要提供 Gemini API Key" }, { status: 400 });
       }
       const base64 = buffer.toString("base64");
-      result = await extractFromImage(base64, "application/pdf", key, apiBase || undefined);
+      result = await extractFromImage(base64, "application/pdf", key);
     } else {
       return Response.json({ error: `不支持的文件格式: ${filename}` }, { status: 400 });
     }

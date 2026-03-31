@@ -96,10 +96,6 @@ export default function ImportPage() {
       formData.append("apiKey", apiKey);
       localStorage.setItem("ai_api_key", apiKey);
     }
-    if (apiBase) {
-      formData.append("apiBase", apiBase);
-      localStorage.setItem("ai_api_base", apiBase);
-    }
 
     try {
       const res = await fetch("/api/import/extract", { method: "POST", body: formData });
@@ -234,7 +230,7 @@ export default function ImportPage() {
     imageAi: locale === "en" ? "AI recognition" : "AI 识别",
     apiSettings: locale === "en" ? "AI API Settings" : "AI API 设置",
     apiKeyLabel: locale === "en" ? "Gemini API Key" : "Gemini API Key",
-    apiBaseLabel: locale === "en" ? "API Base URL (default: Gemini)" : "API Base URL（默认 Gemini，可改为其他兼容接口）",
+    apiBaseLabel: "",
     analyzing: locale === "en" ? "Analyzing document..." : "正在解析文档...",
     previewTitle: locale === "en" ? "Data Preview" : "数据预览",
     productInfo: locale === "en" ? "Product Information" : "产品信息",
@@ -331,19 +327,10 @@ export default function ImportPage() {
                     placeholder="AIzaSy..."
                   />
                 </div>
-                <div>
-                  <Label className="text-xs">{labels.apiBaseLabel}</Label>
-                  <Input
-                    className="mt-1"
-                    value={apiBase}
-                    onChange={(e) => setApiBase(e.target.value)}
-                    placeholder="https://generativelanguage.googleapis.com/v1beta/openai"
-                  />
-                </div>
                 <p className="text-xs text-gray-400">
-                  {locale === "en"
-                    ? "Gemini API key is stored locally in your browser. Required only for image/PDF files. Get your key at aistudio.google.com."
-                    : "Gemini API Key 仅保存在浏览器本地。仅图片/PDF文件需要。可在 aistudio.google.com 获取。"}
+                    {locale === "en"
+                    ? "Gemini API key is stored locally. Required only for image/PDF. Get your key at aistudio.google.com"
+                    : "Key 仅保存在浏览器本地，仅图片/PDF需要。前往 aistudio.google.com → Get API key 获取"}
                 </p>
               </CardContent>
             </Card>
