@@ -233,8 +233,8 @@ export default function ImportPage() {
     excelDirect: locale === "en" ? "Direct parsing" : "直接解析",
     imageAi: locale === "en" ? "AI recognition" : "AI 识别",
     apiSettings: locale === "en" ? "AI API Settings" : "AI API 设置",
-    apiKeyLabel: locale === "en" ? "API Key (OpenAI or compatible)" : "API Key（OpenAI 或兼容接口）",
-    apiBaseLabel: locale === "en" ? "API Base URL (optional)" : "API Base URL（可选，默认 OpenAI）",
+    apiKeyLabel: locale === "en" ? "Gemini API Key" : "Gemini API Key",
+    apiBaseLabel: locale === "en" ? "API Base URL (default: Gemini)" : "API Base URL（默认 Gemini，可改为其他兼容接口）",
     analyzing: locale === "en" ? "Analyzing document..." : "正在解析文档...",
     previewTitle: locale === "en" ? "Data Preview" : "数据预览",
     productInfo: locale === "en" ? "Product Information" : "产品信息",
@@ -328,7 +328,7 @@ export default function ImportPage() {
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-..."
+                    placeholder="AIzaSy..."
                   />
                 </div>
                 <div>
@@ -337,13 +337,13 @@ export default function ImportPage() {
                     className="mt-1"
                     value={apiBase}
                     onChange={(e) => setApiBase(e.target.value)}
-                    placeholder="https://api.openai.com/v1"
+                    placeholder="https://generativelanguage.googleapis.com/v1beta/openai"
                   />
                 </div>
                 <p className="text-xs text-gray-400">
                   {locale === "en"
-                    ? "API key is stored locally in your browser. Required only for image/PDF files."
-                    : "API Key 仅保存在浏览器本地。仅图片/PDF文件需要。"}
+                    ? "Gemini API key is stored locally in your browser. Required only for image/PDF files. Get your key at aistudio.google.com."
+                    : "Gemini API Key 仅保存在浏览器本地。仅图片/PDF文件需要。可在 aistudio.google.com 获取。"}
                 </p>
               </CardContent>
             </Card>

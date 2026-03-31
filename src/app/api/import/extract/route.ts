@@ -203,14 +203,17 @@ function extractValue(str: string, pattern: RegExp): string {
   return str.replace(pattern, "").trim().split(/\s+/)[0] || "";
 }
 
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+const DEFAULT_MODEL = "gemini-2.0-flash";
+
 async function extractFromImage(base64: string, mimeType: string, apiKey: string, apiBase?: string): Promise<ExtractedProduct> {
   const openai = new OpenAI({
     apiKey,
-    baseURL: apiBase || undefined,
+    baseURL: apiBase || GEMINI_BASE_URL,
   });
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o",
+    model: DEFAULT_MODEL,
     max_tokens: 4096,
     messages: [
       {
@@ -270,17 +273,19 @@ export async function POST(request: Request) {
     if (filename.endsWith(".csv") || filename.endsWith(".xlsx") || filename.endsWith(".xls")) {
       result = parseExcelOrCsv(buffer, file.name);
     } else if (/\.(jpg|jpeg|png|webp|gif|bmp)$/.test(filename)) {
-      if (!apiKey) {
-        return Response.json({ error: "图片识别需要提供 AI API Key（支持 OpenAI 或兼容接口）" }, { status: 400 });
+      const key = apiKey || process.env.GEMINI_API_KEY;
+      if (!key) {
+        return Response.json({ error: "图片识别需要提供 Gemini API Key（在设置中填写或配置环境变量 GEMINI_API_KEY）" }, { status: 400 });
       }
       const base64 = buffer.toString("base64");
-      result = await extractFromImage(base64, file.type, apiKey, apiBase || undefined);
+      result = await extractFromImage(base64, file.type, key, apiBase || undefined);
     } else if (filename.endsWith(".pdf")) {
-      if (!apiKey) {
-        return Response.json({ error: "PDF 识别需要提供 AI API Key" }, { status: 400 });
+      const key = apiKey || process.env.GEMINI_API_KEY;
+      if (!key) {
+        return Response.json({ error: "PDF 识别需要提供 Gemini API Key" }, { status: 400 });
       }
       const base64 = buffer.toString("base64");
-      result = await extractFromImage(base64, "application/pdf", apiKey, apiBase || undefined);
+      result = await extractFromImage(base64, "application/pdf", key, apiBase || undefined);
     } else {
       return Response.json({ error: `不支持的文件格式: ${filename}` }, { status: 400 });
     }
