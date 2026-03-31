@@ -23,7 +23,13 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`服务器响应异常 (${res.status})，请检查数据库是否已初始化`);
+      }
       if (!res.ok) throw new Error(data.error || "登录失败");
       router.push("/");
       router.refresh();
