@@ -203,15 +203,28 @@ function extractValue(str: string, pattern: RegExp): string {
   return str.replace(pattern, "").trim().split(/\s+/)[0] || "";
 }
 
-// ---- Gemini native API with retry + fallback model ----
+// ---- Gemini native API ----
 
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
-const MAX_RETRIES = 3;
-const RETRY_DELAYS = [5000, 15000, 30000];
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function listModels(apiKey: string): Promise<string[]> {
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.models || [])
+      .filter((m: { supportedGenerationMethods?: string[] }) =>
+        m.supportedGenerationMethods?.includes("generateContent")
+      )
+      .map((m: { name: string }) => m.name.replace("models/", ""))
+      .filter((name: string) => /gemini.*(flash|pro)/i.test(name));
+  } catch {
+    return [];
+  }
 }
 
 async function callGeminiOnce(model: string, base64: string, mimeType: string, apiKey: string): Promise<{ ok: boolean; text?: string; status?: number; error?: string }> {
@@ -256,38 +269,59 @@ async function callGeminiOnce(model: string, base64: string, mimeType: string, a
 }
 
 async function callGemini(base64: string, mimeType: string, apiKey: string): Promise<string> {
-  let lastError = "";
+  const preferredModels = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-latest"];
 
-  for (const model of MODELS) {
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const result = await callGeminiOnce(model, base64, mimeType, apiKey);
-
-      if (result.ok) {
-        if (!result.text) throw new Error("Gemini 返回空内容，请换一张更清晰的图片");
-        return result.text;
-      }
-
-      lastError = `[${model}] ${result.status}: ${result.error}`;
-      console.log(`Gemini attempt ${attempt + 1}/${MAX_RETRIES} with ${model} failed: ${lastError}`);
-
-      if (result.status === 429) {
-        await sleep(RETRY_DELAYS[attempt] || 30000);
-        continue;
-      }
-
-      if (result.status === 400) {
-        throw new Error(`API Key 无效或请求格式错误: ${result.error}`);
-      }
-      if (result.status === 403) {
-        throw new Error(`API Key 无权限，请检查是否已启用 Gemini API: ${result.error}`);
-      }
-
-      break;
-    }
-    console.log(`Model ${model} exhausted, trying next model...`);
+  // First attempt with preferred model
+  const firstResult = await callGeminiOnce(preferredModels[0], base64, mimeType, apiKey);
+  if (firstResult.ok) {
+    if (!firstResult.text) throw new Error("Gemini 返回空内容，请换一张更清晰的图片");
+    return firstResult.text;
   }
 
-  throw new Error(`Gemini 持续限流，请等待 1 分钟后重试。最后错误: ${lastError}`);
+  // If 400/403, throw immediately with clear message
+  if (firstResult.status === 400) {
+    throw new Error(`请求被拒绝 (400): ${firstResult.error}`);
+  }
+  if (firstResult.status === 403) {
+    throw new Error(`API Key 无权限 (403): ${firstResult.error}\n\n请确认已在 aistudio.google.com 创建 Key，且 Gemini API 已启用。`);
+  }
+
+  // If 429, show the ACTUAL reason (quota? region? billing?)
+  if (firstResult.status === 429) {
+    // Check if it mentions quota/region in the error
+    const err = firstResult.error || "";
+    if (/quota|limit|exhausted/i.test(err)) {
+      throw new Error(`Gemini 免费额度已用完: ${err}\n\n请等待几分钟后重试，或在 Google Cloud Console 升级配额。`);
+    }
+    if (/location|region|country/i.test(err)) {
+      throw new Error(`当前区域不支持 Gemini API: ${err}\n\n请检查网络环境。`);
+    }
+    // Unknown 429 — show raw error and try to list available models
+    const available = await listModels(apiKey);
+    const modelList = available.length > 0
+      ? `你的 Key 可用模型: ${available.slice(0, 5).join(", ")}`
+      : "无法获取可用模型列表";
+    throw new Error(`Gemini 请求被拒 (429): ${err}\n\n${modelList}\n\n如持续出现，请等 1-2 分钟后重试。`);
+  }
+
+  // For 404 or other errors, try fallback models
+  for (const model of preferredModels.slice(1)) {
+    const result = await callGeminiOnce(model, base64, mimeType, apiKey);
+    if (result.ok) {
+      if (!result.text) throw new Error("Gemini 返回空内容");
+      return result.text;
+    }
+    if (result.status !== 404) {
+      throw new Error(`Gemini API 错误 (${result.status}): ${result.error}`);
+    }
+  }
+
+  // All models failed, list what's actually available
+  const available = await listModels(apiKey);
+  if (available.length > 0) {
+    throw new Error(`未找到可用模型。你的 Key 支持的模型: ${available.slice(0, 8).join(", ")}`);
+  }
+  throw new Error(`Gemini API 不可用。请检查: 1) API Key 是否正确  2) 是否在 aistudio.google.com 创建  3) 网络是否可访问 Google 服务`);
 }
 
 async function extractFromImage(base64: string, mimeType: string, apiKey: string): Promise<ExtractedProduct> {
