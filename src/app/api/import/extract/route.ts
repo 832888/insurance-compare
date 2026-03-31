@@ -269,59 +269,81 @@ async function callGeminiOnce(model: string, base64: string, mimeType: string, a
 }
 
 async function callGemini(base64: string, mimeType: string, apiKey: string): Promise<string> {
-  const preferredModels = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-latest"];
+  // Get all available models dynamically
+  const available = await listModels(apiKey);
+  console.log("Available Gemini models:", available);
 
-  // First attempt with preferred model
-  const firstResult = await callGeminiOnce(preferredModels[0], base64, mimeType, apiKey);
-  if (firstResult.ok) {
-    if (!firstResult.text) throw new Error("Gemini 返回空内容，请换一张更清晰的图片");
-    return firstResult.text;
+  // Preferred order: try lite/flash variants that are more likely to have free quota
+  const preferred = [
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro",
+    "gemini-2.5-flash-preview-04-17",
+  ];
+
+  // Build model list: preferred ones first (if available), then any remaining
+  const modelsToTry: string[] = [];
+  for (const p of preferred) {
+    if (available.includes(p)) modelsToTry.push(p);
+  }
+  for (const m of available) {
+    if (!modelsToTry.includes(m)) modelsToTry.push(m);
   }
 
-  // If 400/403, throw immediately with clear message
-  if (firstResult.status === 400) {
-    throw new Error(`请求被拒绝 (400): ${firstResult.error}`);
-  }
-  if (firstResult.status === 403) {
-    throw new Error(`API Key 无权限 (403): ${firstResult.error}\n\n请确认已在 aistudio.google.com 创建 Key，且 Gemini API 已启用。`);
+  if (modelsToTry.length === 0) {
+    throw new Error("API Key 无法获取可用模型列表。请检查 Key 是否正确（应以 AIzaSy 开头）。");
   }
 
-  // If 429, show the ACTUAL reason (quota? region? billing?)
-  if (firstResult.status === 429) {
-    // Check if it mentions quota/region in the error
-    const err = firstResult.error || "";
-    if (/quota|limit|exhausted/i.test(err)) {
-      throw new Error(`Gemini 免费额度已用完: ${err}\n\n请等待几分钟后重试，或在 Google Cloud Console 升级配额。`);
-    }
-    if (/location|region|country/i.test(err)) {
-      throw new Error(`当前区域不支持 Gemini API: ${err}\n\n请检查网络环境。`);
-    }
-    // Unknown 429 — show raw error and try to list available models
-    const available = await listModels(apiKey);
-    const modelList = available.length > 0
-      ? `你的 Key 可用模型: ${available.slice(0, 5).join(", ")}`
-      : "无法获取可用模型列表";
-    throw new Error(`Gemini 请求被拒 (429): ${err}\n\n${modelList}\n\n如持续出现，请等 1-2 分钟后重试。`);
-  }
-
-  // For 404 or other errors, try fallback models
-  for (const model of preferredModels.slice(1)) {
+  // Try each model until one works
+  const errors: string[] = [];
+  for (const model of modelsToTry.slice(0, 6)) {
+    console.log(`Trying model: ${model}`);
     const result = await callGeminiOnce(model, base64, mimeType, apiKey);
+
     if (result.ok) {
-      if (!result.text) throw new Error("Gemini 返回空内容");
+      if (!result.text) throw new Error("Gemini 返回空内容，请换一张更清晰的图片");
+      console.log(`Success with model: ${model}`);
       return result.text;
     }
-    if (result.status !== 404) {
-      throw new Error(`Gemini API 错误 (${result.status}): ${result.error}`);
+
+    if (result.status === 400) {
+      throw new Error(`请求被拒绝 (400): ${result.error}`);
     }
+    if (result.status === 403) {
+      throw new Error(`API Key 无权限 (403): ${result.error}`);
+    }
+
+    errors.push(`${model}: ${result.status}`);
+    console.log(`Model ${model} failed: ${result.status} - ${result.error?.slice(0, 100)}`);
+
+    // 429 with limit:0 means this model has no quota, skip immediately to next
+    if (result.status === 429 && /limit:\s*0/i.test(result.error || "")) {
+      continue;
+    }
+
+    // 429 with actual limit > 0 means temporary rate limit, wait and retry same model
+    if (result.status === 429) {
+      const retryMatch = result.error?.match(/retry in ([\d.]+)s/i);
+      const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) + 2 : 10;
+      console.log(`Rate limited, waiting ${waitSec}s...`);
+      await sleep(waitSec * 1000);
+      const retry = await callGeminiOnce(model, base64, mimeType, apiKey);
+      if (retry.ok && retry.text) return retry.text;
+    }
+
+    // 404 = model not available via this API version, try next
+    if (result.status === 404) continue;
   }
 
-  // All models failed, list what's actually available
-  const available = await listModels(apiKey);
-  if (available.length > 0) {
-    throw new Error(`未找到可用模型。你的 Key 支持的模型: ${available.slice(0, 8).join(", ")}`);
-  }
-  throw new Error(`Gemini API 不可用。请检查: 1) API Key 是否正确  2) 是否在 aistudio.google.com 创建  3) 网络是否可访问 Google 服务`);
+  throw new Error(
+    `所有可用模型均无配额。已尝试: ${errors.join(", ")}。\n\n` +
+    `解决方案:\n` +
+    `1. 前往 console.cloud.google.com/billing 绑定信用卡（可设 $0 预算，不会扣费）\n` +
+    `2. 或等待免费配额刷新（通常每分钟重置）\n` +
+    `3. 或直接上传 Excel/CSV 格式的测算表（无需 AI）`
+  );
 }
 
 async function extractFromImage(base64: string, mimeType: string, apiKey: string): Promise<ExtractedProduct> {
