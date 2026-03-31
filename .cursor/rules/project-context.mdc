@@ -1,0 +1,101 @@
+---
+description: 保险方案比较系统的完整项目上下文，供新对话继续开发时参考
+globs:
+alwaysApply: true
+---
+
+# 保险方案比较系统 — 项目上下文
+
+## 项目定位
+面向香港保险顾问的「储蓄分红险 + 保费融资」方案对比与演示工具。
+
+## 技术栈
+- **前端**: Next.js 16 (App Router) + React 19 + Tailwind CSS 4 + Recharts
+- **后端**: Next.js API Routes
+- **数据库**: SQLite + Prisma 7 (better-sqlite3 adapter)
+- **UI**: 手写组件库 (src/components/ui/)
+- **项目路径**: `c:\Users\W\Desktop\保险\insurance-compare`
+
+## 重要技术细节
+- Prisma 7 需要 driver adapter: `PrismaBetterSqlite3` from `@prisma/adapter-better-sqlite3`
+- DB 客户端在 `src/lib/db.ts`，URL 是 `file:./dev.db`（相对于项目根目录）
+- Prisma client 导入路径: `@/generated/prisma/client`（不是 `@/generated/prisma`）
+- Node.js 路径需要手动添加: `$env:Path = "C:\Program Files\nodejs;" + $env:Path`
+- PowerShell 不支持 `&&` 连接命令，用 `;` 代替
+- Google Fonts 不可用，layout.tsx 中已移除
+- 首页使用 `export const dynamic = "force-dynamic"` 避免静态生成时数据库问题
+
+## 数据库模型 (prisma/schema.prisma)
+- **Company**: 保险公司 (id, name, nameEn, logoUrl, rating, notes)
+- **Product**: 储蓄分红产品 (companyId, name, currency, premiumTerms[JSON], fulfillmentRatio)
+- **CashValueEntry**: 现金价值逐年数据 (productId, entryAge, gender, smoker, annualPremium, premiumTerm, policyYear, guaranteedCV, nonGuaranteedCV, totalCV, guaranteedDeathBenefit, totalDeathBenefit)
+- **FinancingBank**: 融资银行 (bankName, maxLtv, interestType, baseRate, spread, capRate, fixedRate)
+- **Client**: 客户 (name, phone, email, age, gender, smoker, budget, currency, occupation)
+- **Scheme**: 方案记录 (title, clientId, type[COMPARE|FINANCING], status[DRAFT|SENT|ARCHIVED], compareParams, financingParams)
+- **SchemeProduct**: 方案-产品关联 (schemeId, productId, sortOrder)
+
+## 现有路由
+### 页面 (11个)
+- `/` — 仪表盘 (统计 + IRR排行 + 最近方案)
+- `/companies` — 保险公司 CRUD
+- `/products` — 产品列表 CRUD
+- `/products/[id]` — 产品详情 + CSV导入 + 现金价值表录入
+- `/compare` — 产品对比 (选2~4产品, IRR计算, 现金价值曲线, 保存方案)
+- `/banks` — 融资银行 CRUD
+- `/financing` — 单产品融资分析 (净回报, 压力测试, break-even)
+- `/financing/multi` — 融资多场景对比 (最多6场景)
+- `/clients` — 客户管理 CRUD + 搜索
+- `/clients/[id]` — 客户详情 + 关联方案
+- `/schemes` — 方案记录列表 (筛选, 状态管理)
+
+### API (11个)
+- `/api/companies` (GET, POST) + `/api/companies/[id]` (PUT, DELETE)
+- `/api/products` (GET, POST) + `/api/products/[id]` (GET, PUT, DELETE)
+- `/api/products/[id]/cash-values` (POST, DELETE)
+- `/api/banks` (GET, POST) + `/api/banks/[id]` (PUT, DELETE)
+- `/api/clients` (GET, POST) + `/api/clients/[id]` (GET, PUT, DELETE)
+- `/api/schemes` (GET, POST) + `/api/schemes/[id]` (PUT, DELETE)
+
+## 核心工具库
+- `src/lib/utils.ts` — cn(), formatCurrency(), formatPercent(), calculateIRR(), buildCashflowsForIRR()
+- `src/lib/financing.ts` — calculateFinancingReturns(), stressTest(), findBreakevenRate()
+- `src/lib/db.ts` — Prisma 客户端单例
+
+## UI 组件 (src/components/ui/)
+Button, Input, Select, Card/CardHeader/CardTitle/CardContent, Label, Badge, Dialog/DialogHeader/DialogTitle/DialogFooter
+
+## 业务组件 (src/components/)
+- `sidebar.tsx` — 侧边栏导航 (分组: 数据管理/分析工具/客户与方案)
+- `csv-import.tsx` — CSV批量导入组件 (支持中英文表头自动映射)
+- `save-scheme-dialog.tsx` — 保存方案弹窗 (关联客户, 设置标题/备注)
+
+## 种子数据 (prisma/seed.ts)
+- 3家公司: AIA, Prudential, Manulife
+- 3个产品: 盈御3, 隽富, 悦目未来 (各含9年样本数据)
+- 2家银行: 中银香港, 星展银行
+- 运行命令: `npx tsx prisma/seed.ts`
+
+## 已完成的阶段
+### Phase 1 (MVP) ✅
+项目脚手架, 数据库, 产品CRUD, 现金价值录入, 产品对比+IRR, 融资分析+压力测试, PDF导出
+
+### Phase 2 ✅
+CSV批量导入, 客户管理, 方案保存/历史, 融资多场景对比, 仪表盘增强(IRR排行/最近方案)
+
+## 待开发: Phase 3 — AI 智能化
+1. **AI 智能问答** — 基于产品数据的自然语言问答 (用 LLM API + 产品数据做 RAG 或直接 function calling)
+2. **智能推荐** — 根据客户条件(年龄/预算/需求)自动推荐合适产品
+3. **方案自动生成** — 输入客户信息, 一键生成对比方案
+
+## 待开发: Phase 4 — 生态完善
+4. **产品更新通知** — 新产品或费率调整时通知
+5. **数据导出增强** — 服务端 PDF 生成 (puppeteer 或 playwright), Excel导出
+6. **多语言支持** — 繁体中文/简体中文/英文切换
+7. **分红实现率追踪** — 逐年 GN16 数据录入, 趋势图表
+8. **用户认证** — 登录/注册, 多顾问协作
+
+## 开发注意事项
+- 修改 schema 后: `npx prisma migrate dev --name xxx` 然后 `npx prisma generate`
+- 构建验证: `npx next build`
+- 启动开发: `npx next dev --port 3000`
+- Recharts Tooltip 的 formatter 不能直接标注参数类型, 用 `(value) => formatCurrency(Number(value))`

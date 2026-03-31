@@ -1,0 +1,153 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Company {
+  id        String    @id @default(cuid())
+  name      String
+  nameEn    String?
+  logoUrl   String?
+  rating    String?
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+model Product {
+  id                 String           @id @default(cuid())
+  companyId          String
+  company            Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name               String
+  nameEn             String?
+  currency           String           @default("USD")
+  premiumTerms       String           // JSON array: e.g. "[2,5,8,10]"
+  minPremium         Float?
+  maxEntryAge        Int?
+  minEntryAge        Int?
+  policyFeatures     String?          // JSON: key features
+  fulfillmentRatio   Float?           // dividend fulfillment ratio %
+  brochureUrl        String?
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  cashValueEntries   CashValueEntry[]
+  schemeProducts     SchemeProduct[]
+  fulfillmentRecords FulfillmentRecord[]
+}
+
+model FulfillmentRecord {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  year        Int
+  ratio       Float
+  source      String?
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@unique([productId, year])
+  @@index([productId])
+}
+
+model CashValueEntry {
+  id                    String  @id @default(cuid())
+  productId             String
+  product               Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  entryAge              Int
+  gender                String  // M / F
+  smoker                Boolean @default(false)
+  annualPremium         Float
+  premiumTerm           Int
+  totalPremium          Float
+  policyYear            Int
+  guaranteedCV          Float   @default(0)
+  nonGuaranteedCV       Float   @default(0)
+  totalCV               Float   @default(0)
+  guaranteedDeathBenefit Float  @default(0)
+  totalDeathBenefit     Float   @default(0)
+
+  @@unique([productId, entryAge, gender, smoker, annualPremium, premiumTerm, policyYear])
+  @@index([productId])
+}
+
+model FinancingBank {
+  id              String  @id @default(cuid())
+  bankName        String
+  maxLtv          Float   // e.g. 0.8 = 80%
+  interestType    String  // "HIBOR_SPREAD" | "FIXED" | "CAP"
+  baseRate        Float?  // current HIBOR
+  spread          Float?  // spread over HIBOR
+  capRate         Float?  // interest rate cap
+  fixedRate       Float?
+  minLoanAmount   Float?
+  maxLoanTerm     Int?    // max loan term in years
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ===== Auth =====
+
+model SystemUser {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ===== Phase 2: Client & Scheme Management =====
+
+model Client {
+  id          String   @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+  age         Int?
+  gender      String?  // M / F
+  smoker      Boolean  @default(false)
+  budget      Float?
+  currency    String?
+  occupation  String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  schemes     Scheme[]
+}
+
+model Scheme {
+  id              String          @id @default(cuid())
+  title           String
+  clientId        String?
+  client          Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  type            String          // "COMPARE" | "FINANCING"
+  status          String          @default("DRAFT") // "DRAFT" | "SENT" | "ARCHIVED"
+  // Comparison params (JSON)
+  compareParams   String?         // {entryAge, gender, smoker, annualPremium, premiumTerm}
+  // Financing params (JSON)
+  financingParams String?         // {productId, ltv, interestRate, bankId}
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  products        SchemeProduct[]
+
+  @@index([clientId])
+}
+
+model SchemeProduct {
+  id        String  @id @default(cuid())
+  schemeId  String
+  scheme    Scheme  @relation(fields: [schemeId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sortOrder Int     @default(0)
+
+  @@unique([schemeId, productId])
+  @@index([schemeId])
+}
