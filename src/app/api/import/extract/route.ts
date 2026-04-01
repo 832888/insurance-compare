@@ -53,6 +53,54 @@ Rules:
 - If you cannot extract certain fields, use reasonable defaults
 - Return ONLY the JSON object, nothing else`;
 
+/**
+ * Gemini often wraps JSON in markdown fences or adds prose after the object.
+ * Greedy /\{[\s\S]*\}/ breaks when two objects exist or when trailing text follows valid JSON.
+ */
+function parseJsonFromModelText(raw: string): Record<string, unknown> {
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+
+  const start = text.indexOf("{");
+  if (start === -1) throw new Error("AI 返回中未找到 JSON");
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (c === "\\" && inString) {
+      escape = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        const slice = text.slice(start, i + 1);
+        try {
+          return JSON.parse(slice) as Record<string, unknown>;
+        } catch (e) {
+          throw new Error(
+            `JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+      }
+    }
+  }
+  throw new Error("AI 返回的 JSON 不完整（括号不匹配）");
+}
+
 // ---- Excel / CSV parsing (unchanged) ----
 
 function parseExcelOrCsv(buffer: Buffer, filename: string): ExtractedProduct {
@@ -349,20 +397,26 @@ async function callGemini(base64: string, mimeType: string, apiKey: string): Pro
 async function extractFromImage(base64: string, mimeType: string, apiKey: string): Promise<ExtractedProduct> {
   const text = await callGemini(base64, mimeType, apiKey);
 
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("AI 未能识别文档内容");
+  let data: Record<string, unknown>;
+  try {
+    data = parseJsonFromModelText(text);
+  } catch (e) {
+    throw new Error(
+      e instanceof Error ? e.message : "AI 返回无法解析为 JSON，请重试或换一张图片"
+    );
+  }
 
-  const data = JSON.parse(jsonMatch[0]);
-
-  const annualPremium = data.annualPremium || 0;
-  const premiumTerm = data.premiumTerm || 5;
+  const annualPremium = Number(data.annualPremium) || 0;
+  const premiumTerm = Number(data.premiumTerm) || 5;
+  const rawCv = data.cashValues;
+  const cashRows = Array.isArray(rawCv) ? rawCv : [];
 
   return {
-    companyName: data.companyName || "Unknown",
-    productName: data.productName || "Unknown Product",
-    currency: data.currency || "USD",
+    companyName: String(data.companyName ?? "Unknown"),
+    productName: String(data.productName ?? "Unknown Product"),
+    currency: String(data.currency ?? "USD"),
     premiumTerms: [premiumTerm],
-    cashValues: (data.cashValues || []).map((cv: Record<string, number>) => ({
+    cashValues: cashRows.map((cv: Record<string, number>) => ({
       policyYear: cv.policyYear || 0,
       annualPremium: cv.annualPremium || annualPremium,
       premiumTerm: cv.premiumTerm || premiumTerm,
@@ -374,6 +428,17 @@ async function extractFromImage(base64: string, mimeType: string, apiKey: string
       totalDeathBenefit: cv.totalDeathBenefit || 0,
     })),
   };
+}
+
+function mimeForImage(filename: string, reported: string): string {
+  if (reported && reported !== "application/octet-stream") return reported;
+  const n = filename.toLowerCase();
+  if (n.endsWith(".png")) return "image/png";
+  if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+  if (n.endsWith(".webp")) return "image/webp";
+  if (n.endsWith(".gif")) return "image/gif";
+  if (n.endsWith(".bmp")) return "image/bmp";
+  return "image/jpeg";
 }
 
 // ---- Route handler ----
@@ -401,7 +466,11 @@ export async function POST(request: Request) {
         return Response.json({ error: "图片识别需要提供 Gemini API Key（在设置中填写或配置环境变量 GEMINI_API_KEY）" }, { status: 400 });
       }
       const base64 = buffer.toString("base64");
-      result = await extractFromImage(base64, file.type, key);
+      result = await extractFromImage(
+        base64,
+        mimeForImage(file.name, file.type),
+        key
+      );
     } else if (filename.endsWith(".pdf")) {
       const key = apiKey || process.env.GEMINI_API_KEY;
       if (!key) {

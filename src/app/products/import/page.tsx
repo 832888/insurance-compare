@@ -99,22 +99,31 @@ export default function ImportPage() {
 
     try {
       const res = await fetch("/api/import/extract", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "解析失败");
+      const text = await res.text();
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        throw new Error(
+          `服务器返回异常 (${res.status})，请稍后重试`
+        );
+      }
+      if (!res.ok) throw new Error((data.error as string) || "解析失败");
 
-      setExtracted(data);
-      setEditedValues(data.cashValues || []);
-      setProductName(data.productName || "");
-      setCurrency(data.currency || "USD");
-      setPremiumTerms((data.premiumTerms || []).join(","));
+      setExtracted(data as unknown as ExtractedData);
+      setEditedValues((data.cashValues as CashValueRow[]) || []);
+      setProductName(String(data.productName ?? ""));
+      setCurrency(String(data.currency ?? "USD"));
+      setPremiumTerms(((data.premiumTerms as number[]) || []).join(","));
 
+      const companyName = String(data.companyName ?? "");
       const matchedCompany = companies.find(
-        (c) => c.name.includes(data.companyName) || data.companyName.includes(c.name)
+        (c) => c.name.includes(companyName) || companyName.includes(c.name)
       );
       if (matchedCompany) {
         setSelectedCompanyId(matchedCompany.id);
       } else {
-        setNewCompanyName(data.companyName || "");
+        setNewCompanyName(companyName);
         setSelectedCompanyId("__new__");
       }
 
