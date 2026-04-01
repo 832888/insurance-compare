@@ -227,8 +227,8 @@ export default function ImportPage() {
   const labels = {
     title: locale === "en" ? "Smart Import" : "智能导入",
     desc: locale === "en"
-      ? "Upload calculation sheets (Excel/CSV) or scan images to auto-extract product data"
-      : "上传产品测算表（Excel/CSV）或扫描件/图片，自动提取产品数据",
+      ? "Upload illustration sheets (Excel/CSV) or scans. Optimized for HK savings & premium-financing tables."
+      : "上传产品测算表（Excel/CSV）或扫描件/图片；已针对香港储蓄/保费融资类说明表优化识别",
     dropHint: locale === "en"
       ? "Drag & drop file here, or click to select"
       : "拖拽文件到此处，或点击选择文件",

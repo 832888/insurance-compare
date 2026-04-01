@@ -20,19 +20,41 @@ interface ExtractedProduct {
   cashValues: ExtractedCashValue[];
 }
 
-const VISION_PROMPT = `You are an expert at reading Hong Kong insurance product illustration documents (保险计划书/建议书).
+const VISION_PROMPT = `You extract data from Hong Kong insurance illustration documents: 储蓄分红计划书、建议书、以及「保费融资 / Premium Financing」测算表（常见为 Excel 导出或扫描件）。
 
-Analyze this image and extract the following structured data. Return ONLY valid JSON, no markdown.
+Typical layout you MUST handle:
+- Title area: product name e.g.「丰饶传承储蓄保险计划 III」; insurer may appear in 风险声明 footer (e.g. 中国人寿保险(海外)有限公司).
+- Header block: 投保金额、总保费(连保费征费)、首日退保价值、LTV、借贷金额、客户首付、杠杆比率 — use these to infer currency and scale.
+- Main grid: rows = 保单年度 / Year 1–N; merged column groups like「保费融资」(贷款利率、贷款利息、退保金额、退保价值) and「预期退保发还金额」(回报单利、内回报 IRR、净回报).
+- Numbers may show HK$ and USD side-by-side: pick ONE currency for ALL numeric fields — prefer the column used for the main 退保价值 series (usually HKD for HK illustrations).
+
+Map columns to our schema (critical):
+- policyYear = 保单年度终结 / 年度 / Policy year (1,2,3…).
+- totalCV =「退保价值」total surrender / account value for that year (NOT the 净回报 column). Use the large HKD figures in the main projection block.
+- guaranteedCV =「退保金额」under「保证基础」/ guaranteed surrender / guaranteed cash value column if present; else estimate from context or set to 0.
+- nonGuaranteedCV = max(0, totalCV - guaranteedCV) if no separate 非保证 column.
+- guaranteedDeathBenefit / totalDeathBenefit = 0 if the table has no 身故 columns (common for financing sheets).
+- annualPremium: from 年缴保费 or divide「总保费」by 供款年期; if single premium / lump sum, put total premium in annualPremium and set premiumTerm to 1.
+- premiumTerm: 供款年期 / years of premium payment from header; if unclear, use the number of rows that still show premium-related logic or the document default (e.g. 5 or 10).
+
+Ignore: 贷款利率、每月还款利息、净回报、IRR、单利 — those are financing metrics, do not put them in cashValues. Only map surrender/cash value columns as above.
+
+Parse all digits: remove commas, HK$, USD, 千萬 shorthand if obvious. Use plain numbers (no strings).
+
+Return ONLY one JSON object, no markdown, no commentary:
 
 {
-  "companyName": "insurance company name in Chinese",
-  "productName": "product name in Chinese",
-  "currency": "USD or HKD or RMB",
-  "annualPremium": 10000,
+  "companyName": "保险公司中文名",
+  "productName": "产品中文全称",
+  "currency": "HKD",
+  "annualPremium": 0,
   "premiumTerm": 5,
   "cashValues": [
     {
       "policyYear": 1,
+      "annualPremium": 0,
+      "premiumTerm": 5,
+      "totalPremium": 0,
       "guaranteedCV": 0,
       "nonGuaranteedCV": 0,
       "totalCV": 0,
@@ -42,16 +64,7 @@ Analyze this image and extract the following structured data. Return ONLY valid 
   ]
 }
 
-Rules:
-- Extract ALL years visible in the table
-- Cash values (现金价值/退保价值) include guaranteed (保证) and non-guaranteed (非保证) components
-- Death benefit (身故赔偿) similarly has guaranteed and total
-- If a column is not visible, set it to 0
-- Currency: look for $ or USD or HKD or 美元 or 港币
-- Annual premium (年缴保费): the yearly payment amount
-- Premium term (供款期/缴费年期): how many years to pay
-- If you cannot extract certain fields, use reasonable defaults
-- Return ONLY the JSON object, nothing else`;
+Include every policy year row visible in the main table (usually 1–10 or 1–30). For each row, repeat annualPremium/premiumTerm/totalPremium when they are constant across years. If a field is missing, use 0.`;
 
 /**
  * Gemini often wraps JSON in markdown fences or adds prose after the object.
@@ -237,7 +250,9 @@ function mapColumns(headers: string[]) {
 
 function num(v: unknown): number {
   if (v == null) return 0;
-  const n = typeof v === "number" ? v : parseFloat(String(v).replace(/[,，\s$¥]/g, ""));
+  if (typeof v === "number" && !Number.isNaN(v)) return v;
+  const s = String(v).replace(/[,，\s$¥]/g, "").replace(/HKD?|USD|RMB|CNY|港币|美元/gi, "");
+  const n = parseFloat(s);
   return isNaN(n) ? 0 : n;
 }
 
@@ -406,8 +421,8 @@ async function extractFromImage(base64: string, mimeType: string, apiKey: string
     );
   }
 
-  const annualPremium = Number(data.annualPremium) || 0;
-  const premiumTerm = Number(data.premiumTerm) || 5;
+  const annualPremium = num(data.annualPremium);
+  const premiumTerm = num(data.premiumTerm) || 5;
   const rawCv = data.cashValues;
   const cashRows = Array.isArray(rawCv) ? rawCv : [];
 
@@ -416,17 +431,25 @@ async function extractFromImage(base64: string, mimeType: string, apiKey: string
     productName: String(data.productName ?? "Unknown Product"),
     currency: String(data.currency ?? "USD"),
     premiumTerms: [premiumTerm],
-    cashValues: cashRows.map((cv: Record<string, number>) => ({
-      policyYear: cv.policyYear || 0,
-      annualPremium: cv.annualPremium || annualPremium,
-      premiumTerm: cv.premiumTerm || premiumTerm,
-      totalPremium: cv.totalPremium || annualPremium * premiumTerm,
-      guaranteedCV: cv.guaranteedCV || 0,
-      nonGuaranteedCV: cv.nonGuaranteedCV || 0,
-      totalCV: cv.totalCV || (cv.guaranteedCV || 0) + (cv.nonGuaranteedCV || 0),
-      guaranteedDeathBenefit: cv.guaranteedDeathBenefit || 0,
-      totalDeathBenefit: cv.totalDeathBenefit || 0,
-    })),
+    cashValues: cashRows.map((cv: Record<string, unknown>) => {
+      const ap = num(cv.annualPremium) || annualPremium;
+      const pt = num(cv.premiumTerm) || premiumTerm;
+      const g = num(cv.guaranteedCV);
+      const ng = num(cv.nonGuaranteedCV);
+      let t = num(cv.totalCV);
+      if (!t && (g || ng)) t = g + ng;
+      return {
+        policyYear: num(cv.policyYear) || 0,
+        annualPremium: ap,
+        premiumTerm: pt,
+        totalPremium: num(cv.totalPremium) || ap * pt,
+        guaranteedCV: g,
+        nonGuaranteedCV: ng || Math.max(0, t - g),
+        totalCV: t || g + ng,
+        guaranteedDeathBenefit: num(cv.guaranteedDeathBenefit),
+        totalDeathBenefit: num(cv.totalDeathBenefit),
+      };
+    }),
   };
 }
 
